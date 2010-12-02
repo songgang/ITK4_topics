@@ -34,3 +34,4 @@ holds the copyright of this software. This is a non-profit entity that
 promotes the use of ITK for educational and research purposes. ITK is
 distributed under a license that enables use for both non-commercial and
 commercial applications. See LICENSE and NOTICE files for details.
+new last line
