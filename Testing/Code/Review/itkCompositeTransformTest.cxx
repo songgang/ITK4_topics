@@ -24,6 +24,8 @@
 #include "itkScaleTransform.h"
 #include "itkCompositeTransform.h"
 
+namespace {
+
 const double epsilon = 1e-10;
 
 template <typename TPoint>
@@ -66,14 +68,16 @@ bool testVector( const TVector & v1, const TVector & v2 )
   return pass;
   }
 
+} //namespace
+
 /******/
 
 int itkCompositeTransformTest(int ,char *[] )
 {
-  #define NDIMENSIONS 2
+  const unsigned int NDimensions = 2;
 
   /* Create composite transform */
-  typedef itk::CompositeTransform<double, NDIMENSIONS>  CompositeType;
+  typedef itk::CompositeTransform<double, NDimensions>  CompositeType;
   typedef CompositeType::ScalarType                     ScalarType;
 
   CompositeType::Pointer compositeTransform = CompositeType::New();
@@ -82,8 +86,16 @@ int itkCompositeTransformTest(int ,char *[] )
   typedef  itk::Matrix<ScalarType,2,2>   Matrix2Type;
   typedef  itk::Vector<ScalarType,2>     Vector2Type;
 
+  /* Test that we have an empty the queue */
+  if( compositeTransform->GetNumberOfComposingTransforms() != 0 )
+    {
+    std::cout << "Failed. Expected GetNumberOfComposingTransforms to return 0."
+              << std::endl;
+    return EXIT_FAILURE;
+    }
+
   /* Add an affine transform */
-  typedef itk::AffineTransform<ScalarType, NDIMENSIONS> AffineType;
+  typedef itk::AffineTransform<ScalarType, NDimensions> AffineType;
   AffineType::Pointer affine = AffineType::New();
   Matrix2Type matrix2;
   Vector2Type vector2;
@@ -108,8 +120,8 @@ int itkCompositeTransformTest(int ,char *[] )
   std::cout << "Composite Transform:" << std::endl << compositeTransform;
 
   /* Retrieve the transform and check that it's the same */
-  AffineType::Pointer affineGet;
-  affineGet = dynamic_cast<AffineType *>
+  AffineType::ConstPointer affineGet;
+  affineGet = dynamic_cast<AffineType const *>
     ( compositeTransform->GetFrontTransform().GetPointer() );
   if( affineGet.IsNull() )
     {
@@ -167,7 +179,7 @@ int itkCompositeTransformTest(int ,char *[] )
   /*
    * Create and add 2nd transform .
    */
-  typedef itk::ScaleTransform<double, NDIMENSIONS>  ScaleTransformType;
+  typedef itk::ScaleTransform<double, NDimensions>  ScaleTransformType;
   ScaleTransformType::Pointer scaleTransform = ScaleTransformType::New();
 
   ScaleTransformType::ScaleType::ValueType iscaleInit[2] = {2,-0.5};
@@ -273,8 +285,7 @@ int itkCompositeTransformTest(int ,char *[] )
   compositeTransform->SetParameters( parameters );
 
   fixedParameters = compositeTransform->GetFixedParameters();
-  /* unimplemented */
-  //compositeTransform->SetFixedParameters( fixedParameters );
+  compositeTransform->SetFixedParameters( fixedParameters );
 
   unsigned int nParameters = compositeTransform->GetNumberOfParameters();
   std::cout << "Number of parameters: " << nParameters << std::endl;

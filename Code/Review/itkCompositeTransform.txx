@@ -30,7 +30,7 @@ template
 CompositeTransform<TScalar, NDimensions>::
 CompositeTransform() : Superclass( NDimensions, 0 )
 {
-  this->m_ActiveTransform=0;
+  this->m_ActiveTransformIndex=0;
   this->m_TransformQueue.clear();
 }
 
@@ -144,7 +144,7 @@ const typename CompositeTransform< TScalar, NDimensions >::JacobianType &
 CompositeTransform<TScalar, NDimensions>
 ::GetJacobian( const InputPointType & p ) const
 {
-  typename TransformType::Pointer t=const_cast< Self * >( this )->GetNthTransform(this->m_ActiveTransform);
+  typename Superclass::Pointer t=const_cast< Self * >( this )->GetNthTransform(this->m_ActiveTransformIndex);
   this->m_Jacobian=t->GetJacobian(p);
   return this->m_Jacobian;
 }
@@ -155,7 +155,7 @@ const typename CompositeTransform< TScalar, NDimensions >::ParametersType &
 CompositeTransform<TScalar, NDimensions>
 ::GetParameters( ) const
 {
-  typename TransformType::Pointer t=const_cast< Self * >( this )->GetNthTransform(this->m_ActiveTransform);
+  typename Superclass::Pointer t=const_cast< Self * >( this )->GetNthTransform(this->m_ActiveTransformIndex);
   this->m_Parameters=t->GetParameters();
   return this->m_Parameters;
 }

@@ -25,6 +25,17 @@ namespace itk
 {
 
 /** \class CompositeTransform
+ * \brief This class contains a list of transforms and concatenates them by composition.
+ *
+ * TODO: Flesh out and update after final design decisions.
+ *
+ * This class concatenates transforms by means of composition:
+ *    T_1 o T_0 = T_1(T_0(x))
+ * Transforms are stored in a container.
+ * An single "active" transform can be set, for use in the registration framework.
+ *  Details TBD.
+ * Parameter Get/Set functions work only with the active transform.
+ *  Details TBD.
  *
  * \ingroup Transforms
  *
@@ -46,8 +57,6 @@ public:
 
   /** New macro for creation of through a Smart Pointer */
   itkNewMacro( Self );
-
-  typedef Superclass TransformType;
 
   /** InverseTransform type. */
   typedef typename Superclass::InverseTransformBasePointer  InverseTransformBasePointer;
@@ -83,22 +92,29 @@ public:
   itkStaticConstMacro( InputDimension, unsigned int, NDimensions );
   itkStaticConstMacro( OutputDimension, unsigned int, NDimensions );
 
-  /** Transform container object. */
-  typedef std::deque<typename Superclass::Pointer> TransformQueueType;
-
   /** Functionality for composing transforms */
 
   /** Add transforms to the front and the back of the queue */
-  void PushBackTransform( TransformType *t  )
+  void PushBackTransform( Superclass *t  )
     { this->m_TransformQueue.push_back( t ); }
-  void PushFrontTransform( TransformType *t )
+  void PushFrontTransform( Superclass *t )
     { this->m_TransformQueue.push_front( t ); }
 
   /** Remove transforms from the front and the back of the queue */
   void PopBackTransform() { this->m_TransformQueue.pop_back(); }
   void PopFrontTransform() { this->m_TransformQueue.pop_front(); }
-  void SetActiveTransform( unsigned int i ) { this->m_ActiveTransform=i; }
 
+  /** Set/Get Active Transform */
+  void SetActiveTransform( size_t i )
+    { this->m_ActiveTransformIndex=i; this->Modified(); }
+  typename Superclass::Pointer GetActiveTransform()
+    {
+      if( this->IsTransformQueueEmpty() )
+        {
+        return NULL;
+        }
+      return this->GetNthTransform( this->m_ActiveTransformIndex );
+    }
 
   /** Get the parameters that uniquely define the transform This is typically
    * used by optimizers during the process of image registration.  The parameters
@@ -111,13 +127,13 @@ public:
     { return this->m_TransformQueue.front(); };
   typename Superclass::Pointer GetBackTransform()
     { return this->m_TransformQueue.back(); };
-  typename Superclass::Pointer GetNthTransform( unsigned int n )
+  typename Superclass::Pointer GetNthTransform( size_t n )
     { return this->m_TransformQueue[n]; };
 
   /** Misc. functionality */
-  bool IsTransformQueueEmpty() { return this->m_TransformQueue.empty(); }
+  bool IsTransformQueueEmpty() { return this->m_TransformQueue.empty(); } const
   unsigned long GetNumberOfComposingTransforms()
-    { return this->m_TransformQueue.size(); }
+    { return this->m_TransformQueue.size(); } const
   void ClearTransformQueue() { this->m_TransformQueue.clear(); }
 
   /** Return an inverse of this transform. */
@@ -158,26 +174,34 @@ public:
 
   virtual void SetParameters(const ParametersType & p)
   {
-    typename TransformType::Pointer t=const_cast< Self * >( this )->GetNthTransform(this->m_ActiveTransform);
+    typename Superclass::Pointer t=const_cast< Self * >( this )->GetNthTransform(this->m_ActiveTransformIndex);
     t->SetParameters(p);
     return;
   }
 
   virtual const ParametersType & GetFixedParameters(void) const
   {
-    typename TransformType::Pointer t=const_cast< Self * >( this )->GetNthTransform(this->m_ActiveTransform);
+    typename Superclass::Pointer t=const_cast< Self * >( this )->GetNthTransform(this->m_ActiveTransformIndex);
     return t->GetFixedParameters();
   }
 
   /** Set the fixed parameters and update internal transformation. */
-  virtual void SetFixedParameters(const ParametersType &)
-    { itkExceptionMacro("SetFixedParameters unimplemented."); }
+  virtual void SetFixedParameters(const ParametersType & fixedParameters)
+  {
+    typename Superclass::Pointer t=const_cast< Self * >( this )->GetNthTransform(this->m_ActiveTransformIndex);
+    t->SetFixedParameters(fixedParameters);
+    return;
+  }
 
   virtual unsigned int GetNumberOfParameters(void) const
   {
-    typename TransformType::Pointer t=const_cast< Self * >( this )->GetNthTransform(this->m_ActiveTransform);
+    typename Superclass::Pointer t=const_cast< Self * >( this )->GetNthTransform(this->m_ActiveTransformIndex);
     return t->GetNumberOfParameters();
   }
+
+private:
+  /** Transform container object. */
+  typedef std::deque<typename Superclass::Pointer> TransformQueueType;
 
 protected:
   CompositeTransform();
@@ -185,7 +209,7 @@ protected:
   void PrintSelf( std::ostream& os, Indent indent ) const;
 
   TransformQueueType  m_TransformQueue;
-  unsigned int        m_ActiveTransform;
+  size_t              m_ActiveTransformIndex;
 
 private:
   CompositeTransform( const Self& ); //purposely not implemented
