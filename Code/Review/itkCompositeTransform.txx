@@ -1,6 +1,6 @@
 /*=========================================================================
 
-  Program:   Insight Segmentation & Registration Toolkit
+  Program:   Insight Segmentation & Registration Toolki
   Module:    $RCSfile: itkCompositeTransform.txx,v $
   Language:  C++
   Date:      $Date: $
@@ -65,7 +65,7 @@ bool CompositeTransform<TScalar, NDimensions>
 }
 
 /**
- * Transform point
+ * Transform poin
  */
 template
 <class TScalar, unsigned int NDimensions>
@@ -116,7 +116,15 @@ CompositeTransform<TScalar, NDimensions>
       }
     }
 
-  inverse->m_TransformsToOptimizeFlags = this->m_TransformsToOptimizeFlags;
+  /* Copy these flags in reverse */
+  inverse->m_TransformsToOptimizeFlags.clear();
+  for( TransformsToOptimizeFlagsType::iterator
+       it = this->m_TransformsToOptimizeFlags.begin();
+       it != this->m_TransformsToOptimizeFlags.end(); it++ )
+      {
+      inverse->m_TransformsToOptimizeFlags.push_front( *it );
+      }
+
   return true;
 }
 
@@ -225,8 +233,6 @@ CompositeTransform<TScalar, NDimensions>
   /* Verify proper input size. */
   if( inputParameters.Size() != this->GetNumberOfParameters() )
     {
-    std::cerr << "CompositeTransform::SetParameters error: object dump: "
-              << std::endl << this;
     itkExceptionMacro(<< "Input parameter list size is not expected size. "
                       << inputParameters.Size() << " instead of "
                       << this->GetNumberOfParameters() << ".");

@@ -382,10 +382,20 @@ int itkCompositeTransformTest(int ,char *[] )
     return EXIT_FAILURE;
     }
 
-  /* Get parameters with multi-transform. */
-  parametersTest = compositeTransform->GetParameters();
+  /* Test GetNumberOfParameters */
   unsigned int affineParamsN = affine->GetNumberOfParameters();
   unsigned int scaleParamsN = scaleTransform->GetNumberOfParameters();
+  unsigned int nParameters = compositeTransform->GetNumberOfParameters();
+  std::cout << "Number of parameters: " << nParameters << std::endl;
+  if( nParameters != affineParamsN + scaleParamsN )
+    {
+    std::cout << "GetNumberOfParameters failed for multi-transform."
+              << std::endl << "Expected " << affineParamsN+scaleParamsN
+              << std::endl;
+    }
+
+  /* Get parameters with multi-transform. */
+  parametersTest = compositeTransform->GetParameters();
   parametersTruth.SetSize( scaleParamsN + affineParamsN );
   /* Fill using different method than is used in the class.
      Remember we added scaleTransform 2nd, so it's at front of queue */
@@ -409,7 +419,7 @@ int itkCompositeTransformTest(int ,char *[] )
 
   /* Set parameters with multi transform. */
   parametersNew.SetSize( parametersTruth.Size() );
-  parametersNew.Fill( -1 );
+  parametersNew.Fill( 3.14 );
   parametersNew[0] = 19;
   parametersNew[ parametersTruth.Size() - 1 ] = 71;
   std::cout << "Set Multi-transform Parameters: " << std::endl;
@@ -472,9 +482,6 @@ int itkCompositeTransformTest(int ,char *[] )
     return EXIT_FAILURE;
     }
 
-  unsigned int nParameters = compositeTransform->GetNumberOfParameters();
-  std::cout << "Number of parameters: " << nParameters << std::endl;
-
   /* Test GetJacobian with two transforms */
   CompositeType::JacobianType jacTruth, jacComposite2, jacAffine, jacScale;
   CompositeType::InputPointType jacPoint2;
@@ -496,8 +503,127 @@ int itkCompositeTransformTest(int ,char *[] )
     return EXIT_FAILURE;
     }
 
-//  TODO - test get/set params with only a subset of transforms
-//  TODO - test set/clear of transforToOptimzie flags
+  /*
+   * Add a third transform
+   */
+
+  /* Add another affine transform */
+  AffineType::Pointer affine2 = AffineType::New();
+  matrix2[0][0] = 1.1;
+  matrix2[0][1] = 2.2;
+  matrix2[1][0] = 3.3;
+  matrix2[1][1] = 4.4;
+  vector2[0] = 5.5;
+  vector2[1] = 6.5;
+  affine2->SetMatrix(matrix2);
+  affine2->SetOffset(vector2);
+
+  /* Reset first affine to non-singular values */
+  matrix2[0][0] = 1;
+  matrix2[0][1] = 2;
+  matrix2[1][0] = 3;
+  matrix2[1][1] = 4;
+  vector2[0] = 5;
+  vector2[1] = 6;
+  affine->SetMatrix(matrix2);
+  affine->SetOffset(vector2);
+
+  compositeTransform->AddTransform( affine2 );
+  //std::cout << "compositeTransform with 3 subs: "
+  //          << std::endl << compositeTransform << std::endl;
+
+  /* Test TransformsToOptimize flags */
+  compositeTransform->SetAllTransformsToOptimizeOff();
+  if( compositeTransform->GetNthTransformToOptimize(0) ||
+      compositeTransform->GetNthTransformToOptimize(1) ||
+      compositeTransform->GetNthTransformToOptimize(2) )
+      {
+      std::cout << "Failed clearing all TransformToOptimize flags. " << std::endl;
+      return EXIT_FAILURE;
+      }
+
+  compositeTransform->SetOnlyMostRecentTransformToOptimizeOn();
+  if( ! compositeTransform->GetNthTransformToOptimize(0) ||
+      compositeTransform->GetNthTransformToOptimize(1) ||
+      compositeTransform->GetNthTransformToOptimize(2) )
+      {
+      std::cout << "Failed setting only most recent TransformsToOptimize flag. "
+                << std::endl;
+      return EXIT_FAILURE;
+      }
+
+  /* Get inverse and check TransformsToOptimize flags are correct */
+  CompositeType::ConstPointer inverseTransform3;
+  inverseTransform3 = dynamic_cast<const CompositeType *>
+    ( compositeTransform->GetInverseTransform().GetPointer() );
+  if( ! inverseTransform3 )
+    {
+    std::cout << "Failed calling GetInverseTransform() (3)." << std::endl;
+    return EXIT_FAILURE;
+    }
+  if( inverseTransform3->GetNthTransformToOptimize(0) ||
+      inverseTransform3->GetNthTransformToOptimize(1) ||
+      ! inverseTransform3->GetNthTransformToOptimize(2) )
+      {
+      std::cout << "Failed checking TransformsToOptimize flags on inverse. "
+                << std::endl;
+      return EXIT_FAILURE;
+      }
+
+  /* Test get params with only 1st and last transforms set to optimize.
+   * This implicitly tests the m_PreviousTransformsToOptimizeUpdateTime mechanism
+   * for updating m_TransformsToOptimizeQueue.
+   * This includes the affine and affine2 transforms */
+
+  compositeTransform->SetNthTransformToOptimize(2, true);
+  if( ! compositeTransform->GetNthTransformToOptimize(0) ||
+      compositeTransform->GetNthTransformToOptimize(1) ||
+      ! compositeTransform->GetNthTransformToOptimize(2) )
+      {
+      std::cout << "Failed setting last TransformToOptimize flag. "
+                << std::endl;
+      return EXIT_FAILURE;
+      }
+
+  parametersTest = compositeTransform->GetParameters();
+  affineParamsN = affine->GetNumberOfParameters();
+  unsigned int affine2ParamsN = affine2->GetNumberOfParameters();
+  parametersTruth.SetSize( affineParamsN + affine2ParamsN );
+  for( unsigned int n=0; n < affine2ParamsN; n++)
+    parametersTruth.SetElement(
+      n, affine2->GetParameters().GetElement( n ) );
+  for( unsigned int n=0; n < affineParamsN; n++)
+    parametersTruth.SetElement( n + affine2ParamsN,
+      affine->GetParameters().GetElement( n ) );
+  std::cout << "Get 1st and 3rd transform Parameters: " << std::endl
+            << "parametersTruth: " << std::endl << parametersTruth
+            << std::endl
+            << "parametersTest from Composite: " << std::endl << parametersTest
+            << std::endl;
+
+  if( !testVectorArray( parametersTest, parametersTruth ) )
+    {
+    std::cout << "Failed GetParameters() for 1st and 3rd transforms." << std::endl;
+    return EXIT_FAILURE;
+    }
+
+  /* Test SetParameters with wrong size array */
+  parametersTruth.SetSize(1);
+  bool caught = false;
+  try
+    {
+    compositeTransform->SetParameters( parametersTruth );
+    }
+  catch( itk::ExceptionObject & err )
+   {
+   caught = true;
+   }
+  if( !caught )
+    {
+    std::cout << "Expected exception calling SetParameters with wrong size"
+              << std::endl;
+    return EXIT_FAILURE;
+    }
 
   return EXIT_SUCCESS;
 

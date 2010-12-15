@@ -101,7 +101,7 @@ public:
    */
   void AddTransform( Superclass *t  )
   {
-    this->PushFrontTransform( t ); /* Also adds to TransformToOptimize list */
+    this->PushFrontTransform( t ); /* Also adds to TransformsToOptimize list */
   }
 
   /** Remove transforms from the front and the back of the queue */
@@ -160,7 +160,7 @@ public:
     this->SetAllTransformsToOptimize( false );
   }
 
-  void SetOnlyMostRecentTransformToOptimize()
+  void SetOnlyMostRecentTransformToOptimizeOn()
   {
     this->SetAllTransformsToOptimize( false );
     this->SetNthTransformToOptimizeOn( 0 );
