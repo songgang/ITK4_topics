@@ -30,8 +30,10 @@ template
 CompositeTransform<TScalar, NDimensions>::
 CompositeTransform() : Superclass( NDimensions, 0 )
 {
-  this->m_ActiveTransformIndex=0;
   this->m_TransformQueue.clear();
+  this->m_TransformsToOptimizeFlags.clear();
+  this->m_TransformsToOptimizeQueue.clear();
+  this->m_PreviousTransformsToOptimizeUpdateTime = 0;
 }
 
 /**
@@ -51,7 +53,8 @@ bool CompositeTransform<TScalar, NDimensions>
 {
   typename TransformQueueType::const_iterator it;
 
-  for( it = this->m_TransformQueue.begin(); it != this->m_TransformQueue.end(); ++it )
+  for( it = this->m_TransformQueue.begin();
+        it != this->m_TransformQueue.end(); ++it )
     {
     if ( !(*it)->IsLinear() )
       {
@@ -74,10 +77,11 @@ CompositeTransform<TScalar, NDimensions>
 {
   OutputPointType outputPoint( inputPoint );
   typename TransformQueueType::const_iterator it;
-
-  for( it = this->m_TransformQueue.begin(); it != this->m_TransformQueue.end(); ++it )
+  /* Transforms are added to front of queue. Apply from back of queue. */
+  it = this->m_TransformQueue.end();
+  while( it != this->m_TransformQueue.begin() )
     {
-    outputPoint = (*it)->TransformPoint( outputPoint );
+    outputPoint = (*--it)->TransformPoint( outputPoint );
     }
   return outputPoint;
 }
@@ -93,27 +97,26 @@ CompositeTransform<TScalar, NDimensions>
 {
   typename TransformQueueType::const_iterator it;
 
-  /* clear queue! */
   inverse->ClearTransformQueue();
 
-  for( it = this->m_TransformQueue.begin(); it != this->m_TransformQueue.end(); ++it )
+  for( it = this->m_TransformQueue.begin();
+       it != this->m_TransformQueue.end(); ++it )
     {
     typename Superclass::Pointer inverseTransform = dynamic_cast<Superclass *>(
       ( ( *it )->GetInverseTransform() ).GetPointer() );
     if ( !inverseTransform )
       {
-      /* Empty the queue in case any were added before this fail.
-       * Originally this was calling 'inverse=NULL' but that doesn't
-       * work to set the pointer to NULL outside of this scope, and
-       * doesn't really seen to be proper behavior anyway. */
       inverse->ClearTransformQueue();
       return false;
       }
     else
       {
+      /* This also sets TransformToOptimizeFlags list, but it's reset below. */
       inverse->PushFrontTransform( inverseTransform );
       }
     }
+
+  inverse->m_TransformsToOptimizeFlags = this->m_TransformsToOptimizeFlags;
   return true;
 }
 
@@ -144,8 +147,31 @@ const typename CompositeTransform< TScalar, NDimensions >::JacobianType &
 CompositeTransform<TScalar, NDimensions>
 ::GetJacobian( const InputPointType & p ) const
 {
-  typename Superclass::Pointer t=const_cast< Self * >( this )->GetNthTransform(this->m_ActiveTransformIndex);
-  this->m_Jacobian=t->GetJacobian(p);
+  /* Returns a concatenated MxN array, holding the Jacobian of each sub
+   * transform that is selected for optimization.
+   * M = total number of parameters in the selected sub transforms
+   * N = dimensionality of the transforms */
+
+  TransformQueueType transforms = this->GetTransformsToOptimizeQueue();
+
+  if( transforms.size() == 1 )
+    {
+    return transforms[0]->GetJacobian( p );
+    }
+  else
+    {
+    this->m_Jacobian.SetSize( NDimensions, this->GetNumberOfParameters() );
+    unsigned int offset = 0;
+    typename TransformQueueType::const_iterator it;
+
+    for( it = transforms.begin(); it != transforms.end(); ++it )
+      {
+      /* Copy from another matrix, element-by-element */
+      /* The matrices are row-major, so block copy is less obviously better */
+      this->m_Jacobian.update( (*it)->GetJacobian( p ), 0, offset );
+      offset += (*it)->GetParameters().Size();
+      }
+    }
   return this->m_Jacobian;
 }
 
@@ -155,9 +181,224 @@ const typename CompositeTransform< TScalar, NDimensions >::ParametersType &
 CompositeTransform<TScalar, NDimensions>
 ::GetParameters( ) const
 {
-  typename Superclass::Pointer t=const_cast< Self * >( this )->GetNthTransform(this->m_ActiveTransformIndex);
-  this->m_Parameters=t->GetParameters();
+  TransformQueueType transforms = this->GetTransformsToOptimizeQueue();
+  if( transforms.size() == 1 )
+    {
+    this->m_Parameters = transforms[0]->GetParameters();
+    }
+  else
+    {
+    /* Resize destructively. But if it's already this size, nothing is done so
+     * it's efficient. */
+    this->m_Parameters.SetSize( this->GetNumberOfParameters() );
+
+    ParametersType    subParameters;
+    unsigned int      offset = 0;
+    typename TransformQueueType::const_iterator it;
+
+    for( it = transforms.begin(); it != transforms.end(); ++it )
+      {
+      subParameters = (*it)->GetParameters();
+      /* use vnl_vector data_block() to get data ptr */
+      memcpy( &(this->m_Parameters.data_block())[offset],
+              subParameters.data_block(),
+              subParameters.Size()
+                * sizeof( ParametersValueType ) );
+      offset += subParameters.Size();
+      }
+    }
+
   return this->m_Parameters;
+}
+
+template
+<class TScalar, unsigned int NDimensions>
+void
+CompositeTransform<TScalar, NDimensions>
+::SetParameters(const ParametersType & inputParameters)
+{
+  /* Assumes input params are concatenation of the parameters of the
+     sub transforms currently selected for optimization, in
+     the order of the queue from begin() to end(). */
+  TransformQueueType transforms = this->GetTransformsToOptimizeQueue();
+
+  /* Verify proper input size. */
+  if( inputParameters.Size() != this->GetNumberOfParameters() )
+    {
+    std::cerr << "CompositeTransform::SetParameters error: object dump: "
+              << std::endl << this;
+    itkExceptionMacro(<< "Input parameter list size is not expected size. "
+                      << inputParameters.Size() << " instead of "
+                      << this->GetNumberOfParameters() << ".");
+    }
+  this->m_Parameters = inputParameters;
+
+  if( transforms.size() == 1 )
+    {
+    transforms[0]->SetParameters(this->m_Parameters);
+    }
+  else
+    {
+    ParametersType    subParameters;
+    unsigned int      offset = 0;
+    typename TransformQueueType::const_iterator it;
+
+    for( it = transforms.begin(); it != transforms.end(); ++it )
+      {
+      subParameters = (*it)->GetParameters();
+      /* Use vnl_vector data_block() to get data ptr */
+      memcpy( subParameters.data_block(),
+              &(this->m_Parameters.data_block())[offset],
+              subParameters.Size()
+                * sizeof( ParametersValueType ) );
+      /* Call SetParameters explicitly to include anything extra it does */
+      (*it)->SetParameters(subParameters);
+      offset += subParameters.Size();
+      }
+    }
+  return;
+}
+
+template
+<class TScalar, unsigned int NDimensions>
+const typename CompositeTransform< TScalar, NDimensions >::ParametersType &
+CompositeTransform<TScalar, NDimensions>
+::GetFixedParameters(void) const
+{
+  TransformQueueType transforms = this->GetTransformsToOptimizeQueue();
+  /* Resize destructively. But if it's already this size, nothing is done so
+   * it's efficient. */
+  this->m_FixedParameters.SetSize( this->GetNumberOfFixedParameters() );
+
+  ParametersType    subFixedParameters;
+  unsigned int      offset = 0;
+  typename TransformQueueType::const_iterator it;
+
+  for( it = transforms.begin(); it != transforms.end(); ++it )
+    {
+    subFixedParameters = (*it)->GetFixedParameters();
+    /* use vnl_vector data_block() to get data ptr */
+    memcpy( &(this->m_FixedParameters.data_block())[offset],
+            subFixedParameters.data_block(),
+            subFixedParameters.Size()
+              * sizeof( ParametersValueType ) );
+    offset += subFixedParameters.Size();
+    }
+
+  return this->m_FixedParameters;
+}
+
+
+
+
+template
+<class TScalar, unsigned int NDimensions>
+void
+CompositeTransform<TScalar, NDimensions>
+::SetFixedParameters(const ParametersType & inputParameters)
+{
+  /* Assumes input params are concatenation of the parameters of the
+     sub transforms currently selected for optimization. */
+  TransformQueueType transforms = this->GetTransformsToOptimizeQueue();
+
+  ParametersType    subFixedParameters;
+  unsigned int      offset = 0;
+  typename TransformQueueType::const_iterator it;
+
+  /* Verify proper input size. */
+  if( inputParameters.Size() != this->GetNumberOfFixedParameters() )
+    {
+    std::cerr << "CompositeTransform::SetFixedParameters error: object dump: "
+              << std::endl << this;
+    itkExceptionMacro(<< "Input parameter list size is not expected size. "
+                      << inputParameters.Size() << " instead of "
+                      << this->GetNumberOfFixedParameters() << ".");
+    }
+  this->m_FixedParameters = inputParameters;
+
+  for( it = transforms.begin(); it != transforms.end(); ++it )
+    {
+    subFixedParameters = (*it)->GetFixedParameters();
+    /* Use vnl_vector data_block() to get data ptr */
+    memcpy( subFixedParameters.data_block(),
+            &(this->m_FixedParameters.data_block())[offset],
+            subFixedParameters.Size()
+              * sizeof( ParametersValueType ) );
+    /* Call SetParameters explicitly to include anything extra it does */
+    (*it)->SetFixedParameters(subFixedParameters);
+    offset += subFixedParameters.Size();
+    }
+
+  return;
+}
+
+
+template
+<class TScalar, unsigned int NDimensions>
+unsigned int
+CompositeTransform<TScalar, NDimensions>
+::GetNumberOfParameters(void) const
+{
+  /* Returns to total number of params in all transforms currently
+   * set to be used for optimized.
+   * NOTE: We might want to optimize this only to store the result and
+   * only re-calc when the composite object has been modified. */
+  unsigned int result = 0;
+  typename TransformQueueType::iterator it;
+  TransformQueueType transforms = this->GetTransformsToOptimizeQueue();
+
+  for( it = transforms.begin(); it != transforms.end(); ++it )
+    {
+    result += (*it)->GetNumberOfParameters();
+    }
+
+  return result;
+}
+
+template
+<class TScalar, unsigned int NDimensions>
+unsigned int
+CompositeTransform<TScalar, NDimensions>
+::GetNumberOfFixedParameters(void) const
+{
+  /* Returns to total number of params in all transforms currently
+   * set to be used for optimized.
+   * NOTE: We might want to optimize this only to store the result and
+   * only re-calc when the composite object has been modified. */
+  unsigned int result = 0;
+  typename TransformQueueType::iterator it;
+  TransformQueueType transforms = this->GetTransformsToOptimizeQueue();
+
+  for( it = transforms.begin(); it != transforms.end(); ++it )
+    {
+    result += (*it)->GetFixedParameters().Size();
+    }
+
+  return result;
+}
+
+template
+<class TScalar, unsigned int NDimensions>
+typename CompositeTransform< TScalar, NDimensions >::TransformQueueType &
+CompositeTransform<TScalar, NDimensions>
+::GetTransformsToOptimizeQueue() const
+{
+  /* Update the list of transforms to use for optimization only if
+     the selection of transforms to optimize may have changed */
+  if( this->GetMTime() > this->m_PreviousTransformsToOptimizeUpdateTime )
+    {
+    this->m_TransformsToOptimizeQueue.clear();
+    for( size_t n=0; n < this->m_TransformQueue.size(); n++ )
+      {
+      /* Return them in the same order as they're found in the main list */
+      if( this->GetNthTransformToOptimize( n ) )
+        {
+        this->m_TransformsToOptimizeQueue.push_back( m_TransformQueue[n] );
+        }
+      }
+    this->m_PreviousTransformsToOptimizeUpdateTime = this->GetMTime();
+    }
+  return this->m_TransformsToOptimizeQueue;
 }
 
 
@@ -173,6 +414,16 @@ PrintSelf( std::ostream& os, Indent indent ) const
     os << indent << "Transform queue is empty." << std::endl;
     return;
     }
+
+  os  << indent << "TransformsToOptimizeFlags, begin() to end(): "
+      << std::endl << indent << indent;
+  for(  TransformsToOptimizeFlagsType::iterator
+          it = this->m_TransformsToOptimizeFlags.begin();
+        it != this->m_TransformsToOptimizeFlags.end(); it++ )
+          {
+          os << *it << " ";
+          }
+  os << std::endl;
 
   os << indent <<  "Transforms in queue, from begin to end:" << std::endl;
   typename TransformQueueType::const_iterator it;
